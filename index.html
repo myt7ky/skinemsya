@@ -1,0 +1,38 @@
+<!doctype html><html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Скинемся — разделить чек</title><style>
+*{box-sizing:border-box}body{margin:0;background:#eae9df;color:#22281d;font:16px/1.5 Arial,sans-serif}main{width:min(780px,100%);margin:auto;padding:36px 20px}header{padding:24px 0}h1{font-size:clamp(44px,8vw,80px);line-height:1;letter-spacing:-.065em;margin:0}p{color:#53594d}section{padding:24px;background:#fffef8;border-radius:14px;margin:12px 0}h2{margin:0 0 12px;font-size:22px}input,textarea,button{font:inherit}input,textarea{padding:11px;border:1px solid #a9ad9f;border-radius:6px;background:white;max-width:100%}textarea,#names{width:100%}button{background:#263821;color:white;padding:10px 16px;border:0;border-radius:6px;cursor:pointer;margin:5px 3px 0 0}.chips{display:flex;gap:7px;flex-wrap:wrap}.chips label{background:#eef1df;padding:5px 10px;border-radius:20px;cursor:pointer}.line{border-top:1px dashed #b4b6a9;padding:14px 0}.line strong{display:block;margin-bottom:8px;overflow-wrap:anywhere}.summary{background:#e0efa9}pre{white-space:pre-wrap;font:inherit;margin:0 0 12px}small{display:block;color:#515744}output{display:block;color:#883f23}</style><main><header><h1>Скинемся.</h1><p>Один человек оплатил общий чек? Отметьте, кто что брал, и получите суммы для перевода.</p></header><section><h2>Кто участвует?</h2><label for="names">Имена через запятую, первым укажите того, кто платил</label><input id="names" value="Аня, Борис, Ира"></section><section><h2>Что в чеке?</h2><label for="items">Каждая покупка с новой строки. В конце укажите её полную стоимость в рублях.</label><textarea id="items" rows="4">Пицца 900
+Лимонад 150
+Доставка 99</textarea><button id="apply">Разобрать чек</button><output id="error" role="alert"></output></section><section><h2>Кто что брал?</h2><div id="lines"></div></section><section class="summary"><h2>Кому сколько переводить</h2><pre id="result"></pre><button id="copy">Скопировать для чата</button><small id="note" role="status"></small></section></main><script>
+const byId=id=>document.getElementById(id);
+const rub=c=>(c/100).toLocaleString('ru-RU',{minimumFractionDigits:2,maximumFractionDigits:2})+' ₽';
+function parse(names,text){
+ const people=names.split(',').map(n=>n.trim());
+ if(people.length<2||people.some(n=>!n)||new Set(people).size!==people.length)throw Error('Укажите хотя бы два разных имени и уберите пустые поля.');
+ const lines=text.trim().split(/\r?\n/).filter(s=>s.trim()).map((s,i)=>{
+ const m=s.trim().match(/^(.+?)\s+(\d{1,8})(?:[,.](\d{1,2}))?\s*₽?$/);
+ if(!m)throw Error('Проверьте строку '+(i+1)+'. Пример записи — Молоко 89,90');
+ return {name:m[1],cost:Number(m[2])*100+Number((m[3]||'').padEnd(2,'0')),members:people.slice()};
+ });if(!lines.length)throw Error('Добавьте хотя бы одну покупку.');return {people,lines};
+}
+function split(state){
+ const totals=new Map(state.people.map(p=>[p,0]));
+ for(const item of state.lines){
+ if(!item.members.length)throw Error('Выберите участника для «'+item.name+'».');
+ item.members.forEach((p,i)=>totals.set(p,totals.get(p)+Math.floor(item.cost/item.members.length)+(i<item.cost%item.members.length?1:0)));
+ }return totals;
+}
+let state;
+function summary(){
+ byId('note').textContent='';try{const totals=split(state),payer=state.people[0];
+ byId('result').textContent=['Чек на '+rub(state.lines.reduce((s,l)=>s+l.cost,0)),'Оплатил(а) '+payer+' · своя доля '+rub(totals.get(payer)),...state.people.slice(1).map(n=>n+' → '+payer+'   '+rub(totals.get(n)))].join('\n');byId('copy').disabled=false;
+ }catch(e){byId('result').textContent=e.message;byId('copy').disabled=true}
+}
+function draw(){const area=byId('lines');area.replaceChildren();state.lines.forEach(item=>{
+ const box=document.createElement('div');box.className='line';const title=document.createElement('strong');title.textContent=item.name+' · '+rub(item.cost);box.append(title);
+ const chips=document.createElement('div');chips.className='chips';for(const name of state.people){const label=document.createElement('label'),check=document.createElement('input');check.type='checkbox';check.checked=item.members.includes(name);check.onchange=()=>{item.members=state.people.filter((p,i)=>chips.querySelectorAll('input')[i].checked);summary()};label.append(check,' '+name);chips.append(label)}box.append(chips);area.append(box)});summary()}
+function apply(){try{const next=parse(byId('names').value,byId('items').value);
+ if(state){const previous=new Map();for(const row of state.lines){if(!previous.has(row.name))previous.set(row.name,[]);previous.get(row.name).push(row)}for(const row of next.lines){const old=previous.get(row.name)?.shift();if(old)row.members=next.people.filter(n=>old.members.includes(n)||(!state.people.includes(n)&&old.members.length===state.people.length))}}
+ state=next;byId('error').textContent='';draw()}catch(e){byId('error').textContent=e.message}}
+function dirty(){byId('lines').replaceChildren();byId('result').textContent='Нажмите «Разобрать чек», чтобы обновить расчёт.';byId('copy').disabled=true;byId('note').textContent='';byId('error').textContent=''}
+byId('names').oninput=byId('items').oninput=dirty;byId('apply').onclick=apply;byId('copy').onclick=async()=>{try{await navigator.clipboard.writeText(byId('result').textContent);byId('note').textContent='Скопировано'}catch{const range=document.createRange();range.selectNodeContents(byId('result'));getSelection().removeAllRanges();getSelection().addRange(range);byId('note').textContent='Текст выделен. Выберите «Копировать».'}};
+apply();state.lines[1].members=['Борис'];draw();
+</script></html>
